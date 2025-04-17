@@ -1,67 +1,84 @@
+""""
+Clicking the next button as opposed to using the URL to navigate to the next page
+caused 'query_selector' to not detect all items on the  page past page 2.
+"""
+
 import nodriver as nd
 from nodriver import *
 import sqlite3
 import random
 
+# Accept cookies; possibly aids remaining undetected
+async def accept_cookies(tab):
+    cookies = await (tab.query_selector("#onetrust-accept-btn-handler"))
+    if cookies:
+        await cookies.click()
+    popup = await tab.query_selector(".go3588653706")
+    if popup:
+        await popup.click()
+
+
 async def main():
+    # Create a SQLite database
     con = sqlite3.connect("stock_status.sqlite")
     cur = con.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY , url TEXT NOT NULL, availability TEXT NOT NULL)")
+    cur.execute("CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY , url TEXT NOT NULL, availability TEXT NOT NULL)")
 
+    # Create persistent nodriver config; possibly aids remaining undetected
     config = Config()
     config.headless = False
     config.user_data_dir = "./profile",
 
-    driver = await nd.start(config)
+    # Initiate nodriver
+    browser = await nd.start(config)
     website = "https://jellycat.com/shop-all#/sort:ss_days_since_created:asc"
-    tab = await driver.get(website)
-    cookies = await (tab.find("Accept All Cookies", best_match=True))
-    if cookies:
-        await cookies.click()
-    items = await tab.query_selector(".tw-mr-8")
-    items_number = float(items.text) if items else 0
-    page_number = round(items_number/36)
-    page = 1
-    for i in range(page_number):
-        cookies = await (tab.find("Accept All Cookies", best_match=True))
-        if cookies:
-            await cookies.click()
-        print("Page: " + str(page))
-        #"""
-        jellies = await tab.select_all(".product")
-        #print(str(len(jellies)))
-        for jelly in jellies:
-            #print("LOOOP")
-            card = await jelly.query_selector(".card-figure__link")
-            #print("BOOP")
-            if card:
-                #print("CARD")
-                try:
-                    card.attributes.index("aria-label")
-                finally:
-                    #print("ARIA")
-                    name = card.attrs["aria-label"].replace("'", "").split(",", 1)[0] if card else None
-                    if name:
-                        #print("NAME")
-                        items_number -= 1
-                        url = card.attrs["href"] if card else ""
-                        button = await jelly.query_selector(".disabled")
-                        availability = button.text if button else "Available"
-                        #print(name + url + availability)
-                        cur.execute(
-                            "INSERT INTO items (id, url , availability) VALUES('" + name + "' ,'" + url + "' ,'" + availability + "') ON CONFLICT DO UPDATE SET availability = excluded.availability;")
-                        con.commit()
-        #next_button = await (tab.find("Next", best_match=True))
-        """
+    tab = await browser.get(website)
+    await tab.sleep(3)
+    await tab.get_content()
+    await accept_cookies(tab)
+    await browser.cookies.save()
+
+    # Calculate number of pages based on total number of items; assumes 3x12 grid
+    total_products_str = await tab.query_selector(".tw-mr-8")
+    total_products_float = float(total_products_str.text) if total_products_str else 0
+    total_pages = round(total_products_float/36)
+    current_page = 1
+
+    # Loop through all pages
+    for i in range(total_pages):
+        #await accept_cookies(tab)
+        print("current_page: " + str(current_page))
+        products = await tab.select_all(".product")
+        print(str(len(products)))
+        for product in products:
+            # Commit new product to database or update availability
+            try:
+                product_card = await product.query_selector(".card-figure__link")
+                #Strips price from product name
+                name = product_card.attrs["aria-label"].replace("'", "").split(",", 1)[0]
+                url = product_card.attrs["href"]
+                # Disabled buttons indicate 'Coming Soon' or 'Out of Stock'
+                button = await product.query_selector(".disabled")
+                availability = button.text if button else "Available"
+
+                cur.execute(
+                    "INSERT INTO products (id, url , availability) "
+                    "VALUES('" + name + "' ,'" + url + "' ,'" + availability + "') "
+                    "ON CONFLICT DO UPDATE SET availability = excluded.availability;"
+                )
+                con.commit()
+            except:
+                print("                                                         ERROR")
+        # Delay loading next page
         await tab.sleep(random.randint(2, 7))
         if random.randint(0, 1) == 1:
             await tab.sleep(random.randint(1, 4))
-        """
-        await tab.sleep(60)
-        page += 1
-        website = "https://jellycat.com/shop-all?page="+str(page)+"#/sort:ss_days_since_created:asc"
-        tab = await driver.get(website)
-        #await next_button.click()
+        current_page += 1
+        website = "https://jellycat.com/shop-all?page="+str(current_page)+"#/sort:ss_days_since_created:asc"
+        tab = await browser.get(website)
+        await browser.cookies.load()
+        await tab.sleep(3)
+        await tab.get_content()
     await tab.close()
 
 if __name__ == "__main__":
