@@ -1,53 +1,68 @@
-import selenium
-from selenium import webdriver
-from selenium.common import NoSuchElementException
-from selenium.webdriver import ActionChains
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.by import By
+import nodriver as nd
+from nodriver import *
 import sqlite3
-import os
-from selenium.webdriver.support import expected_conditions as EC
-import re
 import random
-import asyncio
-import new as uc
 
+async def main():
+    con = sqlite3.connect("stock_status.sqlite")
+    cur = con.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY , url TEXT NOT NULL, availability TEXT NOT NULL)")
 
+    config = Config()
+    config.headless = False
+    config.user_data_dir = "./profile",
 
-from selenium.webdriver.support.wait import WebDriverWait
+    driver = await nd.start(config)
+    website = "https://jellycat.com/shop-all#/sort:ss_days_since_created:asc"
+    tab = await driver.get(website)
+    cookies = await (tab.find("Accept All Cookies", best_match=True))
+    if cookies:
+        await cookies.click()
+    items = await tab.query_selector(".tw-mr-8")
+    items_number = float(items.text) if items else 0
+    page_number = round(items_number/36)
+    page = 1
+    for i in range(page_number):
+        cookies = await (tab.find("Accept All Cookies", best_match=True))
+        if cookies:
+            await cookies.click()
+        print("Page: " + str(page))
+        #"""
+        jellies = await tab.select_all(".product")
+        #print(str(len(jellies)))
+        for jelly in jellies:
+            #print("LOOOP")
+            card = await jelly.query_selector(".card-figure__link")
+            #print("BOOP")
+            if card:
+                #print("CARD")
+                try:
+                    card.attributes.index("aria-label")
+                finally:
+                    #print("ARIA")
+                    name = card.attrs["aria-label"].replace("'", "").split(",", 1)[0] if card else None
+                    if name:
+                        #print("NAME")
+                        items_number -= 1
+                        url = card.attrs["href"] if card else ""
+                        button = await jelly.query_selector(".disabled")
+                        availability = button.text if button else "Available"
+                        #print(name + url + availability)
+                        cur.execute(
+                            "INSERT INTO items (id, url , availability) VALUES('" + name + "' ,'" + url + "' ,'" + availability + "') ON CONFLICT DO UPDATE SET availability = excluded.availability;")
+                        con.commit()
+        #next_button = await (tab.find("Next", best_match=True))
+        """
+        await tab.sleep(random.randint(2, 7))
+        if random.randint(0, 1) == 1:
+            await tab.sleep(random.randint(1, 4))
+        """
+        await tab.sleep(60)
+        page += 1
+        website = "https://jellycat.com/shop-all?page="+str(page)+"#/sort:ss_days_since_created:asc"
+        tab = await driver.get(website)
+        #await next_button.click()
+    await tab.close()
 
-con = sqlite3.connect("stock_status.sqlite")
-cur = con.cursor()
-cur.execute("CREATE TABLE IF NOT EXISTS items(id TEXT PRIMARY KEY , url TEXT NOT NULL, availability TEXT NOT NULL)")
-
-driver = webdriver.Safari()
-actions = ActionChains(driver)
-page=1
-while page <5:
-    #print("Page: " + str(page))
-    website = "https://jellycat.com/shop-all?page="+str(page)
-    print(website)
-    driver.get(website)
-    try:
-        cookies = driver.find_element(By.ID, "onetrust-reject-all-handler")
-        WebDriverWait(driver, 10).until(EC.element_to_be_clickable(cookies))
-        cookies.click()
-    finally:
-        list_items = driver.find_element(By.ID, "searchspring-content").find_elements(By.TAG_NAME, "article")
-        for item in list_items:
-            element = item.find_element(By.CLASS_NAME, "card-figure__link")
-            name = str(element.get_attribute("aria-label")).replace("'", "").split(",", 1)[0]
-            url = str(element.get_attribute("href"))
-            try:
-                item.find_element(By.PARTIAL_LINK_TEXT, "Coming")
-                availability = "Coming Soon"
-            except NoSuchElementException:
-                availability = "Available"
-            print(name+url+availability)
-            cur.execute("INSERT INTO items (id, url , availability) VALUES('"+name+"' ,'"+url+"' ,'"+availability+"') ON CONFLICT DO UPDATE SET availability = excluded.availability;")
-            con.commit()
-        next_page = driver.find_element(By.LINK_TEXT, "Next")
-        next_page.click()
-        driver.implicitly_wait(random.randint(10, 30))
-    page += 1
-driver.close()
+if __name__ == "__main__":
+    nd.loop().run_until_complete(main())
