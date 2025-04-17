@@ -1,11 +1,12 @@
 """"
-Clicking the next button as opposed to using the URL to navigate to the next page
-caused 'query_selector' to not detect all items on the  page past page 2.
+Clicking the next badge as opposed to using the URL to navigate to the next page
+caused 'query_selector' to not detect all items on the page past page 2.
 """
 
+#import sqlite3
+import psycopg2
 import nodriver as nd
 from nodriver import *
-import sqlite3
 import random
 
 # Accept cookies; possibly aids remaining undetected
@@ -19,10 +20,14 @@ async def accept_cookies(tab):
 
 
 async def main():
+    # Connect to PostgreSQL database
+    con = psycopg2.connect("dbname=stockStatus user=postgres")
+
     # Create a SQLite database
-    con = sqlite3.connect("stock_status.sqlite")
+    #con = sqlite3.connect("stock_status.sqlite")
+
     cur = con.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY , url TEXT NOT NULL, availability TEXT NOT NULL)")
+    #cur.execute("CREATE TABLE IF NOT EXISTS products(id TEXT PRIMARY KEY , url TEXT NOT NULL, availability TEXT NOT NULL)")
 
     # Create persistent nodriver config; possibly aids remaining undetected
     config = Config()
@@ -33,7 +38,7 @@ async def main():
     browser = await nd.start(config)
     website = "https://jellycat.com/shop-all#/sort:ss_days_since_created:asc"
     tab = await browser.get(website)
-    await tab.sleep(3)
+    await tab.sleep(5)
     await tab.get_content()
     await accept_cookies(tab)
     await browser.cookies.save()
@@ -46,10 +51,8 @@ async def main():
 
     # Loop through all pages
     for i in range(total_pages):
-        #await accept_cookies(tab)
-        print("current_page: " + str(current_page))
         products = await tab.select_all(".product")
-        print(str(len(products)))
+        #print("PAGE " + str(current_page) + "ITEMS " + str(len(products)))
         for product in products:
             # Commit new product to database or update availability
             try:
@@ -57,14 +60,12 @@ async def main():
                 #Strips price from product name
                 name = product_card.attrs["aria-label"].replace("'", "").split(",", 1)[0]
                 url = product_card.attrs["href"]
-                # Disabled buttons indicate 'Coming Soon' or 'Out of Stock'
-                button = await product.query_selector(".disabled")
-                availability = button.text if button else "Available"
-
+                badge = await product.query_selector(".ss__badge")
+                availability = badge.text if badge else "Available"
                 cur.execute(
                     "INSERT INTO products (id, url , availability) "
-                    "VALUES('" + name + "' ,'" + url + "' ,'" + availability + "') "
-                    "ON CONFLICT DO UPDATE SET availability = excluded.availability;"
+                    +"VALUES('" + name + "' ,'" + url + "' ,'" + availability + "') "
+                    +"ON CONFLICT (id) DO UPDATE SET availability = EXCLUDED.availability;"
                 )
                 con.commit()
             except:
